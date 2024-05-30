@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Torbware Theater</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+  <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      transition: background 0.3s, color 0.3s;
+      background: linear-gradient(135deg, #1c1c1e, #2c2c2e);
+      color: #ffffff;
+    }
+
+    .video-container {
+      position: relative;
+      width: 90%;
+      max-width: 8888px;
+      border-radius: 20px;
+      overflow: hidden;
+      background: #1c1c1e;
+      box-shadow: 10px 10px 20px #000000, -10px -10px 20px #2c2c2e;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .video-container::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: linear-gradient(45deg, #8e44ad, #2980b9);
+      opacity: 0.3;
+      z-index: 1;
+    }
+
+    .inner-shadow {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      box-shadow: inset 5px 5px 10px #000000, inset -5px -5px 10px #2c2c2e;
+      z-index: 2;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      border-radius: 20px;
+      z-index: 3;
+      position: relative;
+    }
+
+    #start-button {
+      /* Aparência geral */
+      background-color: #007AFF; /* Azul icônico da Apple */
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      font-weight: 600; /* Levemente mais espesso para destaque */
+      border-radius: 25px; /* Cantos arredondados suaves */
+      cursor: pointer;
+
+      /* Sombras sutis para profundidade */
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      transition: box-shadow 0.2s ease; /* Transição suave para o efeito hover */
+    }
+
+    #start-button:hover {
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15); /* Sombra mais intensa ao passar o mouse */
+    }
+
+    #start-button:active {
+      transform: translateY(1px); /* Efeito de "clique" sutil */
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Sombra reduzida ao clicar */
+    }
+  </style>
+</head>
+<body>
+  <button id="start-button">Iniciar</button>
+
+  <div class="video-container" style="display: none;">
+    <div class="inner-shadow"></div>
+    <video id="video" controls></video>    
+  </div>
+  
+  <script>
+    const body = document.body;
+    const startButton = document.getElementById('start-button');
+    const videoContainer = document.querySelector('.video-container');
+    const video = document.getElementById('video');
+    const videoSrc = 'movies/tgm/tgm.m3u8';
+    const subtitles = [
+      { src: 'movies/tgm/tgm.vtt', srclang: 'eng', label: 'Inglês' },
+      { src: 'movies/tgm/tgmpt.vtt', srclang: 'pt-br', label: 'Português' }
+    ];
+  
+    let isMaster = false;
+    let ignoreEvents = false;
+    const SYNC_THRESHOLD = 3; // Threshold in seconds to adjust time
+  
+    console.log('Script iniciado');
+  
+    startButton.addEventListener('click', () => {
+      console.log('Botão Iniciar clicado');
+      startButton.style.display = 'none';
+      videoContainer.style.display = 'block';
+  
+      if (Hls.isSupported()) {
+        console.log('HLS é suportado');
+        const hls = new Hls();
+        hls.loadSource(videoSrc);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+          console.log('Evento MANIFEST_PARSED disparado');
+          video.play();
+        });
+      }
+  
+      // Carregar legendas dinamicamente
+      subtitles.forEach(subtitle => {
+        fetch(subtitle.src)
+          .then(response => response.text())
+          .then(data => {
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.src = URL.createObjectURL(new Blob([data], { type: 'text/vtt' }));
+            track.srclang = subtitle.srclang;
+            track.label = subtitle.label;
+            video.appendChild(track);
+          })
+          .catch(error => console.error('Erro ao carregar legendas:', error));
+      });
+  
+      const socket = io('https://theater.torbware.space');
+      console.log('Socket.io conectado');
+  
+      socket.on('set-master', () => {
+        console.log('Você foi definido como o mestre');
+        isMaster = true;
+      });
+  
+      video.addEventListener('play', () => {
+        console.log('Vídeo em reprodução');
+        if (isMaster && !ignoreEvents) {
+          socket.emit('play', video.currentTime);
+        }
+      });
+
+      video.addEventListener('pause', () => {
+        console.log('Vídeo pausado');
+        if (isMaster && !ignoreEvents) {
+          socket.emit('pause', video.currentTime);
+        }
+      });
+
+      video.addEventListener('seeking', () => {
+        console.log('Seeking');
+        if (isMaster && !ignoreEvents) {
+          socket.emit('seek', video.currentTime);
+        }
+      });
+
+      socket.on('play', (currentTime) => {
+        console.log('Reproduzindo vídeo');
+        if (!isMaster) {
+          ignoreEvents = true;
+          video.currentTime = currentTime;
+          video.play();
+          ignoreEvents = false;
+        }
+      });
+
+      socket.on('pause', (currentTime) => {
+        console.log('Pausando vídeo');
+        if (!isMaster) {
+          ignoreEvents = true;
+          video.currentTime = currentTime;
+          video.pause();
+          ignoreEvents = false;
+        }
+      });
+
+      socket.on('seek', (currentTime) => {
+        console.log('Seek recebido');
+        if (!isMaster
+        ) {
+          ignoreEvents = true;
+          video.currentTime = currentTime;
+          ignoreEvents = false;
+        }
+      });
+
+      socket.on('sync-time', (currentTime) => {
+        console.log('Sincronizando tempo');
+        if (!isMaster) {
+          const timeDifference = Math.abs(video.currentTime - currentTime);
+          if (timeDifference > SYNC_THRESHOLD) {
+            ignoreEvents = true;
+            video.currentTime = currentTime;
+            ignoreEvents = false;
+          }
+        }
+      });
+
+      socket.on('request-current-time', () => {
+        console.log('Requisição de tempo atual recebida');
+        if (isMaster) {
+          socket.emit('current-time', video.currentTime);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
